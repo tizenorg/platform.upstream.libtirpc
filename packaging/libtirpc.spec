@@ -51,6 +51,7 @@ mv -v %{buildroot}/%{_lib}/pkgconfig %{buildroot}/%{_libdir}
 %postun -p /sbin/ldconfig
 
 %files
+%license COPYING
 %defattr(-,root,root)
 %config %{_sysconfdir}/netconfig
 /%{_lib}/libtirpc.so.1*
