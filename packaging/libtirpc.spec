@@ -9,6 +9,7 @@ Url:            http://sourceforge.net/projects/libtirpc/
 Group:          System/Libraries
 Source:         %{name}-%{version}.tar.bz2
 Source100:      baselibs.conf
+Source1001: 	libtirpc.manifest
 BuildRequires:  libtool
 BuildRequires:  pkgconfig(pkg-config)
 
@@ -33,6 +34,7 @@ TCP over IPv4
 
 %prep
 %setup -q
+cp %{SOURCE1001} .
 
 %build
 autoreconf -fiv
@@ -51,12 +53,14 @@ mv -v %{buildroot}/%{_lib}/pkgconfig %{buildroot}/%{_libdir}
 %postun -p /sbin/ldconfig
 
 %files
+%manifest %{name}.manifest
 %license COPYING
 %defattr(-,root,root)
 %config %{_sysconfdir}/netconfig
 /%{_lib}/libtirpc.so.1*
 
 %files devel
+%manifest %{name}.manifest
 %defattr(-,root,root)
 %{_libdir}/libtirpc.so
 %dir %{_includedir}/tirpc/
