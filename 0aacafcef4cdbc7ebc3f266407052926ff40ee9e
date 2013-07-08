@@ -1,0 +1,8 @@
+Change-Id: I0aacafcef4cdbc7ebc3f266407052926ff40ee9e
+Code-Review+2: Ryan Ware <ware@linux.intel.com>
+Verified+1: Ryan Ware <ware@linux.intel.com>
+Submitted-by: Ryan Ware <ware@linux.intel.com>
+Submitted-at: Mon, 08 Jul 2013 10:07:53 -0700
+Reviewed-on: https://review.tizen.org/gerrit/5193
+Project: platform/upstream/libtirpc
+Branch: refs/heads/tizen
