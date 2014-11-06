@@ -1,6 +1,11 @@
 SUBDIRS = src man doc
 ACLOCAL_AMFLAGS = -I m4
 
+noinst_HEADERS	       = tirpc/reentrant.h \
+			 tirpc/getpeereid.h \
+			 tirpc/libc_private.h \
+			 tirpc/un-namespace.h
+
 nobase_include_HEADERS = tirpc/netconfig.h \
 			 tirpc/rpcsvc/crypt.x \
 			 tirpc/rpcsvc/crypt.h \
@@ -35,3 +40,6 @@ nobase_include_HEADERS = tirpc/netconfig.h \
     
 pkgconfigdir=$(libdir)/pkgconfig
 pkgconfig_DATA = libtirpc.pc
+
+CLEANFILES	       = cscope.* *~
+DISTCLEANFILES	       = Makefile.in libtirpc*.tar.gz

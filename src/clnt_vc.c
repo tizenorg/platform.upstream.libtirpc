@@ -133,6 +133,7 @@ struct ct_data {
  *      should be the first thing fixed.  One step at a time.
  */
 static int      *vc_fd_locks;
+extern pthread_mutex_t disrupt_lock;
 extern mutex_t  clnt_fd_lock;
 static cond_t   *vc_cv;
 #define release_fd_lock(fd, mask) {	\
@@ -179,8 +180,10 @@ clnt_vc_create(fd, raddr, prog, vers, sendsz, recvsz)
 	socklen_t slen;
 	struct __rpc_sockinfo si;
 
+	mutex_lock(&disrupt_lock);
 	if (disrupt == 0)
 		disrupt = (u_int32_t)(long)raddr;
+	mutex_unlock(&disrupt_lock);
 
 	cl = (CLIENT *)mem_alloc(sizeof (*cl));
 	ct = (struct ct_data *)mem_alloc(sizeof (*ct));
@@ -270,7 +273,9 @@ clnt_vc_create(fd, raddr, prog, vers, sendsz, recvsz)
 	 * Initialize call message
 	 */
 	(void)gettimeofday(&now, NULL);
+	mutex_lock(&disrupt_lock);
 	call_msg.rm_xid = ((u_int32_t)++disrupt) ^ __RPC_GETXID(&now);
+	mutex_unlock(&disrupt_lock);
 	call_msg.rm_direction = CALL;
 	call_msg.rm_call.cb_rpcvers = RPC_MSG_VERSION;
 	call_msg.rm_call.cb_prog = (u_int32_t)prog;
@@ -364,7 +369,7 @@ call_again:
 	if ((! XDR_PUTBYTES(xdrs, ct->ct_u.ct_mcallc, ct->ct_mpos)) ||
 	    (! XDR_PUTINT32(xdrs, (int32_t *)&proc)) ||
 	    (! AUTH_MARSHALL(cl->cl_auth, xdrs)) ||
-	    (! (*xdr_args)(xdrs, args_ptr))) {
+	    (! AUTH_WRAP(cl->cl_auth, xdrs, xdr_args, args_ptr))) {
 		if (ct->ct_error.re_status == RPC_SUCCESS)
 			ct->ct_error.re_status = RPC_CANTENCODEARGS;
 		(void)xdrrec_endofrecord(xdrs, TRUE);
@@ -420,7 +425,8 @@ call_again:
 		    &reply_msg.acpted_rply.ar_verf)) {
 			ct->ct_error.re_status = RPC_AUTHERROR;
 			ct->ct_error.re_why = AUTH_INVALIDRESP;
-		} else if (! (*xdr_results)(xdrs, results_ptr)) {
+		} else if (! AUTH_UNWRAP(cl->cl_auth, xdrs,
+					 xdr_results, results_ptr)) {
 			if (ct->ct_error.re_status == RPC_SUCCESS)
 				ct->ct_error.re_status = RPC_CANTDECODERES;
 		}
@@ -503,6 +509,8 @@ clnt_vc_control(cl, request, info)
 	sigset_t mask;
 	sigset_t newmask;
 	int rpc_lock_value;
+	u_int32_t tmp;
+	u_int32_t ltmp;
 
 	assert(cl != NULL);
 
@@ -582,15 +590,15 @@ clnt_vc_control(cl, request, info)
 		 * begining of the RPC header. MUST be changed if the
 		 * call_struct is changed
 		 */
-		*(u_int32_t *)info =
-		    ntohl(*(u_int32_t *)(void *)(ct->ct_u.ct_mcallc +
-		    4 * BYTES_PER_XDR_UNIT));
+		memcpy(&tmp, ct->ct_u.ct_mcallc + 4 * BYTES_PER_XDR_UNIT, sizeof (tmp));
+		ltmp = ntohl(tmp);
+		memcpy(info, &ltmp, sizeof (ltmp));
 		break;
 
 	case CLSET_VERS:
-		*(u_int32_t *)(void *)(ct->ct_u.ct_mcallc +
-		    4 * BYTES_PER_XDR_UNIT) =
-		    htonl(*(u_int32_t *)info);
+		memcpy(&ltmp, info, sizeof (ltmp));
+		tmp = htonl(ltmp);
+		memcpy(ct->ct_u.ct_mcallc + 4 * BYTES_PER_XDR_UNIT, &tmp, sizeof(tmp));
 		break;
 
 	case CLGET_PROG:
@@ -600,15 +608,15 @@ clnt_vc_control(cl, request, info)
 		 * begining of the RPC header. MUST be changed if the
 		 * call_struct is changed
 		 */
-		*(u_int32_t *)info =
-		    ntohl(*(u_int32_t *)(void *)(ct->ct_u.ct_mcallc +
-		    3 * BYTES_PER_XDR_UNIT));
+		memcpy(&tmp, ct->ct_u.ct_mcallc + 3 * BYTES_PER_XDR_UNIT, sizeof (tmp));
+		ltmp = ntohl (tmp);
+		memcpy(info, &ltmp, sizeof (ltmp));
 		break;
 
 	case CLSET_PROG:
-		*(u_int32_t *)(void *)(ct->ct_u.ct_mcallc +
-		    3 * BYTES_PER_XDR_UNIT) =
-		    htonl(*(u_int32_t *)info);
+		memcpy(&ltmp, info, sizeof (ltmp));
+		tmp = htonl(ltmp);
+		memcpy(ct->ct_u.ct_mcallc + 3 * BYTES_PER_XDR_UNIT, &tmp, sizeof(tmp));
 		break;
 
 	default:

@@ -110,20 +110,19 @@ static bool_t
 authnone_marshal(AUTH *client, XDR *xdrs)
 {
 	struct authnone_private *ap;
-	bool_t dummy;
+	bool_t rv = FALSE;
 	extern mutex_t authnone_lock;
 
 	assert(xdrs != NULL);
 
+	mutex_lock(&authnone_lock);
 	ap = authnone_private;
-	if (ap == NULL) {
-		mutex_unlock(&authnone_lock);
-		return (FALSE);
+	if (ap) {
+		rv = (*xdrs->x_ops->x_putbytes)(xdrs, ap->marshalled_client,
+					        ap->mcnt);
 	}
-	dummy = (*xdrs->x_ops->x_putbytes)(xdrs,
-	    ap->marshalled_client, ap->mcnt);
 	mutex_unlock(&authnone_lock);
-	return (dummy);
+	return (rv);
 }
 
 /* All these unused parameters are required to keep ANSI-C from grumbling */
@@ -155,6 +154,12 @@ authnone_destroy(AUTH *client)
 {
 }
 
+static bool_t
+authnone_wrap(AUTH *auth, XDR *xdrs, xdrproc_t xfunc, caddr_t xwhere)
+{
+	return ((*xfunc)(xdrs, xwhere));
+}
+
 static struct auth_ops *
 authnone_ops()
 {
@@ -170,6 +175,8 @@ authnone_ops()
 		ops.ah_validate = authnone_validate;
 		ops.ah_refresh = authnone_refresh;
 		ops.ah_destroy = authnone_destroy;
+		ops.ah_wrap = authnone_wrap;
+		ops.ah_unwrap = authnone_wrap;
 	}
 	mutex_unlock(&ops_lock);
 	return (&ops);

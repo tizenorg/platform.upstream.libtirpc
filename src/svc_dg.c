@@ -49,13 +49,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef RPC_CACHE_DEBUG
 #include <netconfig.h>
-#include <netdir.h>
-#endif
 #include <err.h>
 
 #include "rpc_com.h"
+#include "debug.h"
 
 #define	su_data(xprt)	((struct svc_dg_data *)(xprt->xp_p2))
 #define	rpc_buffer(xprt) ((xprt)->xp_p1)
@@ -134,6 +132,7 @@ svc_dg_create(fd, sendsize, recvsize)
 	su->su_cache = NULL;
 	xprt->xp_fd = fd;
 	xprt->xp_p2 = su;
+	xprt->xp_auth = NULL;
 	xprt->xp_verf.oa_base = su->su_verfbody;
 	svc_dg_ops(xprt);
 	xprt->xp_rtaddr.maxlen = sizeof (struct sockaddr_storage);
@@ -234,10 +233,27 @@ svc_dg_reply(xprt, msg)
 	bool_t stat = FALSE;
 	size_t slen;
 
+	xdrproc_t xdr_results;
+	caddr_t xdr_location;
+	bool_t has_args;
+
+	if (msg->rm_reply.rp_stat == MSG_ACCEPTED &&
+	    msg->rm_reply.rp_acpt.ar_stat == SUCCESS) {
+		has_args = TRUE;
+		xdr_results = msg->acpted_rply.ar_results.proc;
+		xdr_location = msg->acpted_rply.ar_results.where;
+
+		msg->acpted_rply.ar_results.proc = (xdrproc_t)xdr_void;
+		msg->acpted_rply.ar_results.where = NULL;
+	} else
+		has_args = FALSE;
+
 	xdrs->x_op = XDR_ENCODE;
 	XDR_SETPOS(xdrs, 0);
 	msg->rm_xid = su->su_xid;
-	if (xdr_replymsg(xdrs, msg)) {
+	if (xdr_replymsg(xdrs, msg) &&
+	    (!has_args || (xprt->xp_auth &&
+	     SVCAUTH_WRAP(xprt->xp_auth, xdrs, xdr_results, xdr_location)))) {
 		struct msghdr *msg = &su->su_msghdr;
 		struct iovec iov;
 
@@ -264,7 +280,11 @@ svc_dg_getargs(xprt, xdr_args, args_ptr)
 	xdrproc_t xdr_args;
 	void *args_ptr;
 {
-	return (*xdr_args)(&(su_data(xprt)->su_xdrs), args_ptr);
+	if (! SVCAUTH_UNWRAP(xprt->xp_auth, &(su_data(xprt)->su_xdrs),
+			     xdr_args, args_ptr)) {
+		return FALSE;
+	}
+	return TRUE;
 }
 
 static bool_t
@@ -288,6 +308,10 @@ svc_dg_destroy(xprt)
 	xprt_unregister(xprt);
 	if (xprt->xp_fd != -1)
 		(void)close(xprt->xp_fd);
+	if (xprt->xp_auth != NULL) {
+		SVCAUTH_DESTROY(xprt->xp_auth);
+		xprt->xp_auth = NULL;
+	}
 	XDR_DESTROY(&(su->su_xdrs));
 	(void) mem_free(rpc_buffer(xprt), su->su_iosz);
 	(void) mem_free(su, sizeof (*su));
@@ -480,10 +504,8 @@ cache_set(xprt, replylen)
 	struct cl_cache *uc = (struct cl_cache *) su->su_cache;
 	u_int loc;
 	char *newbuf;
-#ifdef RPC_CACHE_DEBUG
 	struct netconfig *nconf;
 	char *uaddr;
-#endif
 
 	mutex_lock(&dupreq_lock);
 	/*
@@ -523,17 +545,17 @@ cache_set(xprt, replylen)
 	/*
 	 * Store it away
 	 */
-#ifdef RPC_CACHE_DEBUG
-	if (nconf = getnetconfigent(xprt->xp_netid)) {
-		uaddr = taddr2uaddr(nconf, &xprt->xp_rtaddr);
-		freenetconfigent(nconf);
-		printf(
-	"cache set for xid= %x prog=%d vers=%d proc=%d for rmtaddr=%s\n",
-			su->su_xid, uc->uc_prog, uc->uc_vers,
-			uc->uc_proc, uaddr);
-		free(uaddr);
+	if (libtirpc_debug_level > 3) {
+		if ((nconf = getnetconfigent(xprt->xp_netid))) {
+			uaddr = taddr2uaddr(nconf, &xprt->xp_rtaddr);
+			freenetconfigent(nconf);
+			LIBTIRPC_DEBUG(4,
+				("cache set for xid= %x prog=%d vers=%d proc=%d for rmtaddr=%s\n",
+				su->su_xid, uc->uc_prog, uc->uc_vers,
+				uc->uc_proc, uaddr));
+			free(uaddr);
+		}
 	}
-#endif
 	victim->cache_replylen = replylen;
 	victim->cache_reply = rpc_buffer(xprt);
 	rpc_buffer(xprt) = newbuf;
@@ -570,10 +592,8 @@ cache_get(xprt, msg, replyp, replylenp)
 	cache_ptr ent;
 	struct svc_dg_data *su = su_data(xprt);
 	struct cl_cache *uc = (struct cl_cache *) su->su_cache;
-#ifdef RPC_CACHE_DEBUG
 	struct netconfig *nconf;
 	char *uaddr;
-#endif
 
 	mutex_lock(&dupreq_lock);
 	loc = CACHE_LOC(xprt, su->su_xid);
@@ -585,18 +605,19 @@ cache_get(xprt, msg, replyp, replylenp)
 			ent->cache_addr.len == xprt->xp_rtaddr.len &&
 			(memcmp(ent->cache_addr.buf, xprt->xp_rtaddr.buf,
 				xprt->xp_rtaddr.len) == 0)) {
-#ifdef RPC_CACHE_DEBUG
-			if (nconf = getnetconfigent(xprt->xp_netid)) {
-				uaddr = taddr2uaddr(nconf, &xprt->xp_rtaddr);
-				freenetconfigent(nconf);
-				printf(
-	"cache entry found for xid=%x prog=%d vers=%d proc=%d for rmtaddr=%s\n",
-					su->su_xid, msg->rm_call.cb_prog,
-					msg->rm_call.cb_vers,
-					msg->rm_call.cb_proc, uaddr);
-				free(uaddr);
+			if (libtirpc_debug_level > 3) {
+				if ((nconf = getnetconfigent(xprt->xp_netid))) {
+					uaddr = taddr2uaddr(nconf, &xprt->xp_rtaddr);
+					freenetconfigent(nconf);
+					LIBTIRPC_DEBUG(4,
+						("cache entry found for xid=%x prog=%d" 
+						"vers=%d proc=%d for rmtaddr=%s\n",
+						su->su_xid, msg->rm_call.cb_prog,
+						msg->rm_call.cb_vers,
+						msg->rm_call.cb_proc, uaddr));
+					free(uaddr);
+				}
 			}
-#endif
 			*replyp = ent->cache_reply;
 			*replylenp = ent->cache_replylen;
 			mutex_unlock(&dupreq_lock);
@@ -626,10 +647,11 @@ svc_dg_enable_pktinfo(int fd, const struct __rpc_sockinfo *si)
 	case AF_INET:
 		(void) setsockopt(fd, SOL_IP, IP_PKTINFO, &val, sizeof(val));
 		break;
-
+#ifdef INET6
 	case AF_INET6:
-		(void) setsockopt(fd, SOL_IPV6, IPV6_PKTINFO, &val, sizeof(val));
+		(void) setsockopt(fd, SOL_IPV6, IPV6_RECVPKTINFO, &val, sizeof(val));
 		break;
+#endif
 	}
 }
 
@@ -667,6 +689,7 @@ svc_dg_valid_pktinfo(struct msghdr *msg)
 		}
 		break;
 
+#ifdef INET6
 	case AF_INET6:
 		if (cmsg->cmsg_level != SOL_IPV6
 		 || cmsg->cmsg_type != IPV6_PKTINFO
@@ -679,6 +702,7 @@ svc_dg_valid_pktinfo(struct msghdr *msg)
 			pkti->ipi6_ifindex = 0;
 		}
 		break;
+#endif
 
 	default:
 		return 0;
