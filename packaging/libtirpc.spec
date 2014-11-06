@@ -1,7 +1,5 @@
-#
-
 Name:           libtirpc
-Version:        0.2.2
+Version:        0.2.5
 Release:        0
 License:        BSD-4-Clause
 Summary:        Transport Independent RPC Library
@@ -9,8 +7,9 @@ Url:            http://sourceforge.net/projects/libtirpc/
 Group:          System/Libraries
 Source:         %{name}-%{version}.tar.bz2
 Source100:      baselibs.conf
-Source1001: 	libtirpc.manifest
+Source1001:     libtirpc.manifest
 BuildRequires:  libtool
+BuildRequires:  krb5-devel
 BuildRequires:  pkgconfig(pkg-config)
 
 %description
@@ -22,7 +21,7 @@ TCP over IPv4
 %package devel
 License:        BSD-4-Clause
 Summary:        Transport Independent RPC Library
-Group:          Development/Libraries/C and C++
+Group:          System/Libraries
 Requires:       glibc-devel
 Requires:       libtirpc = %{version}
 
@@ -37,14 +36,13 @@ TCP over IPv4
 cp %{SOURCE1001} .
 
 %build
-autoreconf -fiv
-%configure --disable-static --with-pic --libdir=/%{_lib}
-make %{?_smp_mflags}
+%reconfigure --disable-static --with-pic --libdir=/%{_lib}
+%__make %{?_smp_mflags}
 
 %install
 %make_install
 mkdir -p %{buildroot}%{_libdir}
-ln -s -v /%{_lib}/$(readlink %{buildroot}/%{_lib}/%{name}.so) %{buildroot}%{_libdir}/%{name}.so
+ln -sf -v /%{_lib}/$(readlink %{buildroot}/%{_lib}/%{name}.so) %{buildroot}%{_libdir}/%{name}.so
 rm -rf %{buildroot}/%{_lib}/*.so
 mv -v %{buildroot}/%{_lib}/pkgconfig %{buildroot}/%{_libdir}
 
@@ -63,10 +61,7 @@ mv -v %{buildroot}/%{_lib}/pkgconfig %{buildroot}/%{_libdir}
 %manifest %{name}.manifest
 %defattr(-,root,root)
 %{_libdir}/libtirpc.so
-%dir %{_includedir}/tirpc/
 %{_includedir}/tirpc/*
 %{_libdir}/pkgconfig/*
 
 %docs_package
-
-%changelog
