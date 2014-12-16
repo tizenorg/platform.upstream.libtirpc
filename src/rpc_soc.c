@@ -104,6 +104,7 @@ clnt_com_create(raddr, prog, vers, sockp, sendsz, recvsz, tp, flags)
 	if (fd == RPC_ANYSOCK) {
 		static int have_cloexec;
 		fd = __rpc_nconf2fd_flags(nconf, flags);
+#ifdef SOCK_CLOEXEC
 		if (fd == -1) {
 			if ((flags & SOCK_CLOEXEC) && have_cloexec <= 0) {
 				fd = __rpc_nconf2fd(nconf);
@@ -117,6 +118,10 @@ clnt_com_create(raddr, prog, vers, sockp, sendsz, recvsz, tp, flags)
 				goto syserror;
 		} else if (flags & SOCK_CLOEXEC)
 			have_cloexec = 1;
+#else
+		if (fd == -1)
+			goto syserror;
+#endif
 		madefd = TRUE;
 	}
 
@@ -503,9 +508,9 @@ clnt_broadcast(prog, vers, proc, xargs, argsp, xresults, resultsp, eachresult)
 {
 	extern mutex_t tsd_lock;
 
-	if (clnt_broadcast_key == -1) {
+	if (clnt_broadcast_key == KEY_INITIALIZER) {
 		mutex_lock(&tsd_lock);
-		if (clnt_broadcast_key == -1)
+		if (clnt_broadcast_key == KEY_INITIALIZER)
 			thr_keycreate(&clnt_broadcast_key, free);
 		mutex_unlock(&tsd_lock);
 	}
@@ -560,12 +565,10 @@ clntunix_create(raddr, prog, vers, sockp, sendsz, recvsz)
 	u_int recvsz;
 {
 	struct netbuf *svcaddr;
-	struct netconfig *nconf;
 	CLIENT *cl;
 	int len;
 
 	cl = NULL;
-	nconf = NULL;
 	svcaddr = NULL;
 	if (((svcaddr = malloc(sizeof(struct netbuf))) == NULL ) ||
 	    ((svcaddr->buf = malloc(sizeof(struct sockaddr_un))) == NULL)) {
